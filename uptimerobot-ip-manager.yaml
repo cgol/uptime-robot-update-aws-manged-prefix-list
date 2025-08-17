@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda function to manage UptimeRobot IP addresses in AWS managed prefix lists'
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: uptimerobot-ip-manager
+    Description: Name of the Lambda function
+  
+  S3Bucket:
+    Type: String
+    Description: S3 bucket containing the Lambda function code
+    
+  S3Key:
+    Type: String
+    Default: lambda-function.zip
+    Description: S3 key for the Lambda function zip file
+
+Resources:
+  # IAM Role for Lambda function
+  UptimeRobotLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${FunctionName}-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2ManagedPrefixListPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateManagedPrefixList
+                  - ec2:ModifyManagedPrefixList
+                  - ec2:DescribeManagedPrefixLists
+                  - ec2:GetManagedPrefixListEntries
+                Resource: '*'
+
+  # Lambda function
+  UptimeRobotIPManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: python3.13
+      Architectures:
+        - arm64
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt UptimeRobotLambdaRole.Arn
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+
+  # EventBridge rule for daily execution
+  DailyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${FunctionName}-daily-schedule"
+      Description: "Daily trigger for UptimeRobot IP update"
+      ScheduleExpression: "rate(1 day)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt UptimeRobotIPManagerFunction.Arn
+          Id: "UptimeRobotTarget"
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UptimeRobotIPManagerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyScheduleRule.Arn
+
+  # Managed Prefix Lists (will be created by Lambda function)
+  # These are outputs showing what will be created
+  
+Outputs:
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !GetAtt UptimeRobotIPManagerFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-lambda-arn"
+  
+  LambdaFunctionName:
+    Description: "Name of the Lambda function" 
+    Value: !Ref UptimeRobotIPManagerFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-lambda-name"
+      
+  ScheduleRuleArn:
+    Description: "ARN of the EventBridge schedule rule"
+    Value: !GetAtt DailyScheduleRule.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-schedule-arn"
+      
+  ExpectedPrefixLists:
+    Description: "Prefix lists that will be created/managed"
+    Value: "uptimerobot4 (IPv4), uptimerobot6 (IPv6)"

@@ -1,2 +1,261 @@
 # uptime-robot-update-aws-manged-prefix-list
 Lambda function that automatically updates AWS Managed IP prefix lists to allow-list IPs used by Uptime Robot. The Prefix Lists can be referecned by Security Groups to allow Uptime Robot access to applications.
+
+## Overview
+
+The Lambda function:
+- Fetches the latest IP addresses from UptimeRobot's `/meta/ips` API endpoint
+- Separates IPv4 and IPv6 addresses automatically  
+- Consolidates large IP lists into CIDR ranges to stay within AWS limits (100 entries per prefix list after a quota increase from the default 60)
+- Creates/updates two managed prefix lists: `uptimerobot4` (IPv4) and `uptimerobot6` (IPv6)
+- Runs daily via EventBridge to keep the lists current
+- Provides comprehensive logging for monitoring and troubleshooting
+
+Note - The basic code was originally generated with Claude 4.0 and then fixed manually
+
+## Files
+
+- `lambda_function.py` - The main Lambda function code with enhanced logging
+- `uptimerobot-ip-manager.yaml` - CloudFormation template for deployment
+- `deploy.sh` - Automated deployment script
+- `README.md` - This documentation
+
+## Prerequisites
+
+- AWS CLI configured with appropriate permissions
+- An S3 bucket for storing the Lambda deployment package
+- IAM permissions for:
+  - Lambda function management
+  - EC2 managed prefix lists (create, modify, describe)
+  - EventBridge rules
+  - S3 object upload
+  - CloudFormation stack operations
+
+## Quick Deployment
+
+1. **Clone/download all files to a directory**
+
+2. **Make the deployment script executable:**
+   ```bash
+   chmod +x deploy.sh
+   ```
+
+3. **Run the deployment script:**
+   ```bash
+   ./deploy.sh -b your-s3-bucket-name -r us-east-1
+   ```
+
+   Replace `your-s3-bucket-name` with an existing S3 bucket in your account.
+
+## Manual Deployment
+
+If you prefer manual deployment:
+
+1. **Package the Lambda function:**
+   ```bash
+   zip lambda-function.zip lambda_function.py
+   ```
+
+2. **Upload to S3:**
+   ```bash
+   aws s3 cp lambda-function.zip s3://your-bucket/lambda-function.zip
+   ```
+
+3. **Deploy CloudFormation stack:**
+   ```bash
+   aws cloudformation create-stack \
+     --stack-name uptimerobot-ip-manager \
+     --template-body file://uptimerobot-ip-manager.yaml \
+     --parameters \
+       ParameterKey=S3Bucket,ParameterValue=your-bucket \
+       ParameterKey=S3Key,ParameterValue=lambda-function.zip \
+     --capabilities CAPABILITY_NAMED_IAM
+   ```
+
+## Configuration
+
+### Parameters
+
+- `FunctionName` (default: uptimerobot-ip-manager) - Name for the Lambda function
+- `S3Bucket` (required) - S3 bucket containing the deployment package  
+- `S3Key` (default: lambda-function.zip) - S3 object key for the package
+
+### Schedule
+
+The function runs daily at 6 AM UTC. To change this, modify the `ScheduleExpression` in the CloudFormation template:
+
+```yaml
+ScheduleExpression: "cron(0 6 * * ? *)"  # 6 AM UTC daily
+```
+
+## Usage
+
+### In Security Groups
+
+Once deployed, reference the prefix lists in your security groups:
+
+```bash
+# Allow UptimeRobot IPv4 monitoring traffic
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-12345678 \
+  --protocol tcp \
+  --port 80 \
+  --source-prefix-list-id pl-12345678  # uptimerobot4 prefix list ID
+
+# Allow UptimeRobot IPv6 monitoring traffic  
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-12345678 \
+  --protocol tcp \
+  --port 443 \
+  --source-prefix-list-id pl-87654321  # uptimerobot6 prefix list ID
+```
+
+### In CloudFormation Templates
+
+```yaml
+SecurityGroupIngress:
+  - IpProtocol: tcp
+    FromPort: 80
+    ToPort: 80
+    SourcePrefixListId: !Ref UptimeRobotIPv4PrefixList
+  - IpProtocol: tcp
+    FromPort: 443 
+    ToPort: 443
+    SourcePrefixListId: !Ref UptimeRobotIPv6PrefixList
+```
+
+## Monitoring
+
+### CloudWatch Logs
+
+Monitor the function execution in CloudWatch Logs:
+- Log Group: `/aws/lambda/uptimerobot-ip-manager`
+- The function provides detailed logging including:
+  - API response parsing
+  - IP consolidation process
+  - Prefix list operations
+  - Error details with stack traces
+
+### CloudWatch Metrics
+
+Standard Lambda metrics are available:
+- Duration
+- Errors  
+- Invocations
+- Throttles
+
+### Manual Testing
+
+Test the function manually:
+
+```bash
+aws lambda invoke \
+  --function-name uptimerobot-ip-manager \
+  --payload '{}' \
+  response.json && cat response.json
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **API Response Format Changes**
+   - The function handles various JSON response formats flexibly
+   - Check CloudWatch logs for parsing details
+   - Response structure is logged at DEBUG level
+
+2. **Prefix List Limits**
+   - AWS allows max 100 entries per prefix list
+   - Function automatically consolidates IPs into CIDR ranges
+   - Consolidation process is logged with details
+
+3. **Permission Issues**
+   - Ensure the Lambda execution role has EC2 prefix list permissions
+   - Check CloudFormation stack events for IAM-related failures
+
+4. **Network Connectivity**
+   - Function needs internet access to reach UptimeRobot API
+   - If in VPC, ensure NAT Gateway/Instance is configured
+
+### Debug Logging
+
+To enable debug logging, update the Lambda environment variable:
+
+```bash
+aws lambda update-function-configuration \
+  --function-name uptimerobot-ip-manager \
+  --environment Variables='{LOG_LEVEL=DEBUG}'
+```
+
+## Cost Considerations
+
+- Lambda execution: ~$0.01/month (assuming 1-second executions daily)
+- Managed prefix lists: Free (within AWS limits)
+- EventBridge rules: Free (within AWS limits)
+- S3 storage: Minimal cost for deployment package
+
+## Security
+
+The solution follows AWS security best practices:
+- Least-privilege IAM role
+- No hardcoded credentials
+- Encrypted CloudWatch logs
+- Tagged resources for governance
+- No sensitive data in environment variables
+
+## API Response Handling
+
+The function handles various possible JSON response formats from the UptimeRobot API:
+
+```json
+// Format 1: Array of IPs
+["1.2.3.4", "5.6.7.8"]
+
+// Format 2: Object with ips array
+{"ips": ["1.2.3.4", "5.6.7.8"]}
+
+// Format 3: Separate IPv4/IPv6 arrays
+{
+  "ipv4": ["1.2.3.4", "5.6.7.8"],
+  "ipv6": ["2001:db8::1", "2001:db8::2"]
+}
+
+// Format 4: Object array with IP fields
+[
+  {"ip": "1.2.3.4"},
+  {"address": "5.6.7.8"}
+]
+```
+
+## IP Consolidation Algorithm
+
+When there are more than 100 individual IPs, the function consolidates them:
+
+1. **IPv4 Consolidation:** Attempts /24, /16, /8 subnets
+2. **IPv6 Consolidation:** Attempts /64, /48, /32 subnets
+3. **Smart Grouping:** Only consolidates when 2+ IPs share a common subnet
+4. **Fallback:** Truncates to first 100 entries if consolidation insufficient
+
+## Updates
+
+To update the function:
+
+1. Modify `lambda_function.py`
+2. Run the deployment script again:
+   ```bash
+   ./deploy.sh -b your-s3-bucket -r your-region
+   ```
+
+The script automatically detects existing stacks and performs updates.
+
+## Support
+
+For issues:
+1. Check CloudWatch Logs for detailed error information
+2. Verify UptimeRobot API accessibility
+3. Ensure proper IAM permissions
+4. Review CloudFormation stack events
+
+## License
+
+This solution uses the MIT license
