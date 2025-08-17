@@ -215,16 +215,23 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
     )
     
     pl_id = response['PrefixList']['PrefixListId']
-    # wait for the prefix list to be available
-    waiter = ec2_client.get_waiter('prefix_list_exists')
-    logger.info(f"Waiting for prefix list {name} to be available")  
-    waiter.wait(PrefixListIds=[pl_id])
-
     logger.info(f"Successfully created prefix list {name} with ID: {pl_id}")
     
     # Add remaining entries if any
     if remaining_entries:
+        import time
         logger.info(f"Adding {len(remaining_entries)} additional entries")
+        # Wait for prefix list to be available, only takes a few seconds
+        # but we need to ensure it's ready before modifying
+        for _ in range(30):
+            try:
+                pl_status = ec2_client.describe_managed_prefix_lists(PrefixListIds=[pl_id])['PrefixLists'][0]
+                if 'complete' in pl_status['State']:
+                    break
+                time.sleep(2)
+            except:
+                time.sleep(2)
+        
         current_version = response['PrefixList']['Version']
         ec2_client.modify_managed_prefix_list(
             PrefixListId=pl_id,
@@ -239,11 +246,20 @@ def update_prefix_list(prefix_list_id: str, cidrs: List[str]):
     """Update existing managed prefix list"""
     logger.info(f"Updating prefix list {prefix_list_id}")
     
-    # Get current entries
-    current_response = ec2_client.get_managed_prefix_list_entries(
-        PrefixListId=prefix_list_id
-    )
-    current_cidrs = {entry['Cidr'] for entry in current_response['Entries']}
+    # Get current entries with pagination
+    current_cidrs = set()
+    next_token = None
+    while True:
+        params = {'PrefixListId': prefix_list_id}
+        if next_token:
+            params['NextToken'] = next_token
+        
+        current_response = ec2_client.get_managed_prefix_list_entries(**params)
+        current_cidrs.update(entry['Cidr'] for entry in current_response['Entries'])
+        
+        next_token = current_response.get('NextToken')
+        if not next_token:
+            break
     new_cidrs = set(cidrs)
     
     to_add = new_cidrs - current_cidrs

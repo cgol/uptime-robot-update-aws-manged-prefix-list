@@ -135,8 +135,10 @@ if ! aws s3 ls "s3://$S3_BUCKET" --region "$AWS_REGION" > /dev/null 2>&1; then
     exit 1
 fi
 
-# Upload Lambda package to S3
-S3_KEY="lambda-deployments/uptimerobot-ip-manager/lambda-function.zip"
+# Upload Lambda package to S3 with a random key to force a new lambda deployment
+log "Uploading Lambda package to S3 bucket: $S3_BUCKET"
+RANDOM_KEY=$(date +%s)-lambda-function.zip
+S3_KEY="lambda-deployments/uptimerobot-ip-manager/$RANDOM_KEY"
 log "Uploading Lambda package to s3://$S3_BUCKET/$S3_KEY"
 
 aws s3 cp "$TEMP_DIR/lambda-function.zip" "s3://$S3_BUCKET/$S3_KEY" --region "$AWS_REGION"
