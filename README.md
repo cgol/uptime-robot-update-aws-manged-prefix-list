@@ -160,6 +160,8 @@ aws lambda invoke \
 
 1. **Prefix List Limits**
    - AWS allows max 60 entries per prefix list by default, but can be increased with a quota increase request (aws support ticket)
+     logged via https://<region>.console.aws.amazon.com/servicequotas/home/services/vpc/quotas/L-0EA8095F
+     Suggest requesting a maximum of 142
    - Function automatically consolidates IPs into CIDR ranges
    - Consolidation process is logged with details
 

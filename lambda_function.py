@@ -3,11 +3,12 @@ import boto3
 import socket
 import ipaddress
 import logging
+import os
 from typing import List, Dict, Tuple
 
 # Constants
 UPTIMEROBOT_DNS_HOSTNAME = 'ip.uptimerobot.com'
-MAX_ENTRIES_PER_SECURITY_GROUP=120 # 60 by default, need to raise a quota increase request on the AWS account
+MAX_ENTRIES_PER_SECURITY_GROUP = int(os.environ.get('MAX_ENTRIES_PER_SECURITY_GROUP', '120'))
 
 # Configure logging
 logger = logging.getLogger()
@@ -191,13 +192,17 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
     """Create a new managed prefix list"""
     logger.info(f"Creating prefix list {name} with {len(cidrs)} entries")
     
+    # AWS create_managed_prefix_list allows max 100 entries initially
+    initial_entries = cidrs[:100]
+    remaining_entries = cidrs[100:]
+    
     entries = [{'Cidr': cidr, 'Description': f'UptimeRobot {address_family} address'} 
-              for cidr in cidrs]
+              for cidr in initial_entries]
     
     response = ec2_client.create_managed_prefix_list(
         PrefixListName=name,
         Entries=entries,
-        MaxEntries=min(len(cidrs) + 20, MAX_ENTRIES_PER_SECURITY_GROUP),  # Allow for future growth
+        MaxEntries=min(len(cidrs) + 20, MAX_ENTRIES_PER_SECURITY_GROUP),
         AddressFamily=address_family,
         TagSpecifications=[{
             'ResourceType': 'prefix-list',
@@ -211,6 +216,17 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
     
     pl_id = response['PrefixList']['PrefixListId']
     logger.info(f"Successfully created prefix list {name} with ID: {pl_id}")
+    
+    # Add remaining entries if any
+    if remaining_entries:
+        logger.info(f"Adding {len(remaining_entries)} additional entries")
+        current_version = response['PrefixList']['Version']
+        ec2_client.modify_managed_prefix_list(
+            PrefixListId=pl_id,
+            CurrentVersion=current_version,
+            AddEntries=[{'Cidr': cidr, 'Description': f'UptimeRobot {address_family} address'} 
+                       for cidr in remaining_entries]
+        )
     
     return pl_id
 

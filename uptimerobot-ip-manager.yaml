@@ -16,6 +16,12 @@ Parameters:
     Default: lambda-function.zip
     Description: S3 key for the Lambda function zip file
 
+  MaxEntriesPerSecurityGroup:
+    Type: Number
+    Default: 60
+    Description: Maximum number of entries per security group. AWS default is 60, but can be increased with a support request - quota code is L-0EA8095F.
+# Note: This is a soft limit and can be increased by AWS support if needed. Url is https://<region>.console.aws.amazon.com/servicequotas/home/services/vpc/quotas/L-0EA8095F    
+
 Resources:
   # IAM Role for Lambda function
   UptimeRobotLambdaRole:
@@ -43,12 +49,16 @@ Resources:
                   - ec2:DescribeManagedPrefixLists
                   - ec2:GetManagedPrefixListEntries
                 Resource: '*'
+              - Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*"
 
   # Lambda function
   UptimeRobotIPManagerFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Ref FunctionName
+      Description: "Lambda function to manage UptimeRobot monitoring source IP addresses in AWS managed prefix lists"
       Runtime: python3.13
       Architectures:
         - arm64
@@ -61,6 +71,9 @@ Resources:
       Environment:
         Variables:
           LOG_LEVEL: INFO
+          MAX_ENTRIES_PER_SECURITY_GROUP: !Ref MaxEntriesPerSecurityGroup
+      MemorySize: 192
+
 
   # EventBridge rule for daily execution
   DailyScheduleRule:

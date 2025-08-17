@@ -21,10 +21,8 @@ NC='\033[0m' # No Color
 print_usage() {
     echo "Usage: $0 -b <s3-bucket> [-r <aws-region>] [-s <stack-name>] [-f <function-name>]"
     echo ""
-    echo "Required:"
-    echo "  -b    S3 bucket name for storing Lambda deployment package"
-    echo ""
     echo "Optional:"
+    echo "  -b    S3 bucket name for storing Lambda deployment package if left blank will look for a bucket commencing with cf-templates"
     echo "  -r    AWS region (default: current AWS CLI default region)"
     echo "  -s    CloudFormation stack name (default: uptimerobot-ip-manager)"
     echo "  -f    Lambda function name (default: uptimerobot-ip-manager)"
@@ -96,6 +94,23 @@ if [[ ! -f "uptimerobot-ip-manager.yaml" ]]; then
     exit 1
 fi
 
+# Check that the account has the necessary quota for prefix lists
+log "Checking AWS service quotas for prefix lists..."
+QUOTA=$(aws service-quotas get-service-quota --service-code vpc --quota-code L-0EA8095F --region "$AWS_REGION" --query 'Quota.Value' --output text)
+if [[ $? -ne 0 ]]; then
+    error "Failed to retrieve service quota for prefix lists"
+    exit 1
+fi
+
+if (( $(echo "$QUOTA < 120" | bc -l) )); then
+    warn "Current prefix list quota is $QUOTA, which is below the minimum needed by uptimerobot of 120"
+    warn "uptime robot returns 116 entries at time of writing - a quota of 142 is recommended as it allows for future growth and allows up to 7 security groups per network interface."
+    error "Please request a quota increase via AWS Support and wait approval before running again."
+    exit 1
+else
+    log "Current prefix list quota is sufficient: $QUOTA"
+fi
+
 # Create temporary directory for packaging
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
@@ -145,6 +160,7 @@ aws cloudformation $OPERATION \
         ParameterKey=FunctionName,ParameterValue="$FUNCTION_NAME" \
         ParameterKey=S3Bucket,ParameterValue="$S3_BUCKET" \
         ParameterKey=S3Key,ParameterValue="$S3_KEY" \
+        ParameterKey=MaxEntriesPerSecurityGroup,ParameterValue="$QUOTA" \
     --capabilities CAPABILITY_NAMED_IAM \
     --region "$AWS_REGION"
 
