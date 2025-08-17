@@ -4,14 +4,13 @@ Lambda function that automatically updates AWS Managed IP prefix lists to allow-
 ## Overview
 
 The Lambda function:
-- Fetches the latest IP addresses from UptimeRobot's `/meta/ips` API endpoint
-- Separates IPv4 and IPv6 addresses automatically  
-- Consolidates large IP lists into CIDR ranges to stay within AWS limits (100 entries per prefix list after a quota increase from the default 60)
+- Fetches the latest IP addresses from UptimeRobot's ip.uptimerobot.com DNS entry A and AAAA types
+- Consolidates large IP lists into CIDR ranges to stay within AWS limits (120 entries per prefix list - your account will need a quota increase from the default 60)
 - Creates/updates two managed prefix lists: `uptimerobot4` (IPv4) and `uptimerobot6` (IPv6)
 - Runs daily via EventBridge to keep the lists current
 - Provides comprehensive logging for monitoring and troubleshooting
 
-Note - The basic code was originally generated with Claude 4.0 and then fixed manually
+Note - The basic code structure was initially generated with Claude 4.0 and then fixed manually
 
 ## Files
 
@@ -23,7 +22,7 @@ Note - The basic code was originally generated with Claude 4.0 and then fixed ma
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
-- An S3 bucket for storing the Lambda deployment package
+- An S3 bucket for storing the Lambda deployment package - or it will try to find the default cf-templates bucket for the account and region
 - IAM permissions for:
   - Lambda function management
   - EC2 managed prefix lists (create, modify, describe)
@@ -42,10 +41,10 @@ Note - The basic code was originally generated with Claude 4.0 and then fixed ma
 
 3. **Run the deployment script:**
    ```bash
-   ./deploy.sh -b your-s3-bucket-name -r us-east-1
+   ./deploy.sh <-b your-s3-bucket-name> <-r us-east-1>
    ```
 
-   Replace `your-s3-bucket-name` with an existing S3 bucket in your account.
+   Replace `your-s3-bucket-name` with an existing S3 bucket in your account if you don't have a cf-templates bucket
 
 ## Manual Deployment
 
@@ -82,10 +81,10 @@ If you prefer manual deployment:
 
 ### Schedule
 
-The function runs daily at 6 AM UTC. To change this, modify the `ScheduleExpression` in the CloudFormation template:
+The function runs daily at a random time. To change this, modify the `ScheduleExpression` in the CloudFormation template:
 
 ```yaml
-ScheduleExpression: "cron(0 6 * * ? *)"  # 6 AM UTC daily
+ScheduleExpression: "rate(1 day)" 
 ```
 
 ## Usage
@@ -99,7 +98,7 @@ Once deployed, reference the prefix lists in your security groups:
 aws ec2 authorize-security-group-ingress \
   --group-id sg-12345678 \
   --protocol tcp \
-  --port 80 \
+  --port 443 \
   --source-prefix-list-id pl-12345678  # uptimerobot4 prefix list ID
 
 # Allow UptimeRobot IPv6 monitoring traffic  
@@ -115,8 +114,8 @@ aws ec2 authorize-security-group-ingress \
 ```yaml
 SecurityGroupIngress:
   - IpProtocol: tcp
-    FromPort: 80
-    ToPort: 80
+    FromPort: 443
+    ToPort: 443
     SourcePrefixListId: !Ref UptimeRobotIPv4PrefixList
   - IpProtocol: tcp
     FromPort: 443 
@@ -159,23 +158,14 @@ aws lambda invoke \
 
 ### Common Issues
 
-1. **API Response Format Changes**
-   - The function handles various JSON response formats flexibly
-   - Check CloudWatch logs for parsing details
-   - Response structure is logged at DEBUG level
-
-2. **Prefix List Limits**
-   - AWS allows max 100 entries per prefix list
+1. **Prefix List Limits**
+   - AWS allows max 60 entries per prefix list by default, but can be increased with a quota increase request (aws support ticket)
    - Function automatically consolidates IPs into CIDR ranges
    - Consolidation process is logged with details
 
-3. **Permission Issues**
+2. **Permission Issues**
    - Ensure the Lambda execution role has EC2 prefix list permissions
    - Check CloudFormation stack events for IAM-related failures
-
-4. **Network Connectivity**
-   - Function needs internet access to reach UptimeRobot API
-   - If in VPC, ensure NAT Gateway/Instance is configured
 
 ### Debug Logging
 
@@ -203,38 +193,9 @@ The solution follows AWS security best practices:
 - Tagged resources for governance
 - No sensitive data in environment variables
 
-## API Response Handling
-
-The function handles various possible JSON response formats from the UptimeRobot API:
-
-```json
-// Format 1: Array of IPs
-["1.2.3.4", "5.6.7.8"]
-
-// Format 2: Object with ips array
-{"ips": ["1.2.3.4", "5.6.7.8"]}
-
-// Format 3: Separate IPv4/IPv6 arrays
-{
-  "ipv4": ["1.2.3.4", "5.6.7.8"],
-  "ipv6": ["2001:db8::1", "2001:db8::2"]
-}
-
-// Format 4: Object array with IP fields
-[
-  {"ip": "1.2.3.4"},
-  {"address": "5.6.7.8"}
-]
-```
-
 ## IP Consolidation Algorithm
 
-When there are more than 100 individual IPs, the function consolidates them:
-
-1. **IPv4 Consolidation:** Attempts /24, /16, /8 subnets
-2. **IPv6 Consolidation:** Attempts /64, /48, /32 subnets
-3. **Smart Grouping:** Only consolidates when 2+ IPs share a common subnet
-4. **Fallback:** Truncates to first 100 entries if consolidation insufficient
+Uses the standard python ipaddress.collapse_address() function to change a discrete set of consecutive IP addresses to CIDRs for the prefix list 
 
 ## Updates
 
