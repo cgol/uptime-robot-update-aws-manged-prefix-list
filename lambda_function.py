@@ -228,7 +228,7 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
                 pl_status = ec2_client.describe_managed_prefix_lists(PrefixListIds=[pl_id])['PrefixLists'][0]
                 if 'complete' in pl_status['State']:
                     break
-                time.sleep(2)
+                time.sleep(1)
             except:
                 time.sleep(2)
         
