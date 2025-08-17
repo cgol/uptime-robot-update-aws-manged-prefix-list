@@ -72,7 +72,7 @@ Resources:
         Variables:
           LOG_LEVEL: INFO
           MAX_ENTRIES_PER_SECURITY_GROUP: !Ref MaxEntriesPerSecurityGroup
-      MemorySize: 192
+      MemorySize: 256
 
 
   # EventBridge rule for daily execution

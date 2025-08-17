@@ -102,6 +102,9 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
+# Remove the decimal point and any characters after it
+QUOTA=${QUOTA%.*}
+
 if (( $(echo "$QUOTA < 120" | bc -l) )); then
     warn "Current prefix list quota is $QUOTA, which is below the minimum needed by uptimerobot of 120"
     warn "uptime robot returns 116 entries at time of writing - a quota of 142 is recommended as it allows for future growth and allows up to 7 security groups per network interface."
@@ -147,7 +150,7 @@ if aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_
 else
     log "Stack does not exist, creating new stack..."
     OPERATION="create-stack"
-    OPERATION_DESC="creation"
+    OPERATION_DESC="create"
 fi
 
 # Deploy CloudFormation stack
@@ -192,7 +195,7 @@ if [[ "$STACK_STATUS" == *"COMPLETE" ]]; then
     log "Deployment completed successfully!"
     log ""
     log "Next steps:"
-    log "1. The Lambda function will run daily at 6 AM UTC"
+    log "1. The Lambda function will run daily to update the AWS managed prefix lists with UptimeRobot IPs."
     log "2. Check CloudWatch Logs for execution details: /aws/lambda/$FUNCTION_NAME"
     log "3. Monitor the created prefix lists: uptimerobot4 and uptimerobot6"
     log "4. You can now reference these prefix lists in your security groups"

@@ -196,7 +196,7 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
     initial_entries = cidrs[:100]
     remaining_entries = cidrs[100:]
     
-    entries = [{'Cidr': cidr, 'Description': f'UptimeRobot {address_family} address'} 
+    entries = [{'Cidr': cidr, 'Description': f'UptimeRobot monitoring address returned from {UPTIMEROBOT_DNS_HOSTNAME}'} 
               for cidr in initial_entries]
     
     response = ec2_client.create_managed_prefix_list(
@@ -215,6 +215,11 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
     )
     
     pl_id = response['PrefixList']['PrefixListId']
+    # wait for the prefix list to be available
+    waiter = ec2_client.get_waiter('prefix_list_exists')
+    logger.info(f"Waiting for prefix list {name} to be available")  
+    waiter.wait(PrefixListIds=[pl_id])
+
     logger.info(f"Successfully created prefix list {name} with ID: {pl_id}")
     
     # Add remaining entries if any
@@ -224,7 +229,7 @@ def create_prefix_list(name: str, cidrs: List[str], address_family: str, descrip
         ec2_client.modify_managed_prefix_list(
             PrefixListId=pl_id,
             CurrentVersion=current_version,
-            AddEntries=[{'Cidr': cidr, 'Description': f'UptimeRobot {address_family} address'} 
+            AddEntries=[{'Cidr': cidr, 'Description': f'UptimeRobot monitoring address returned from {UPTIMEROBOT_DNS_HOSTNAME}'} 
                        for cidr in remaining_entries]
         )
     
@@ -274,7 +279,7 @@ def update_prefix_list(prefix_list_id: str, cidrs: List[str]):
 
     if to_add:
         modify_params['AddEntries'] = [
-            {'Cidr': cidr, 'Description': 'UptimeRobot monitoring address'}
+            {'Cidr': cidr, 'Description': f'UptimeRobot monitoring address returned from {UPTIMEROBOT_DNS_HOSTNAME}'}
             for cidr in to_add
         ]
     
